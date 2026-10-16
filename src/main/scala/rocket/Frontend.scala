@@ -20,6 +20,7 @@ class SaturnRocketFrontend(edge: TLEdge)(implicit p: Parameters) extends CoreMod
     val tlb = Flipped(new DCacheTLBPort)
 
     val issue = Decoupled(new VectorIssueInst)
+    val issue_refusal = Input(VectorReplayCause()) // why issue.ready is low
 
     val index_access = Flipped(new VectorIndexAccessIO)
     val mask_access = Flipped(new VectorMaskAccessIO)
@@ -59,6 +60,7 @@ class SaturnRocketFrontend(edge: TLEdge)(implicit p: Parameters) extends CoreMod
   pfc.io.s2.scalar_store_pending := io.core.wb.store_pending
 
   io.core.wb.replay := pfc.io.s2.replay
+  io.core.wb.replay_cause := pfc.io.s2.replay_cause
   io.core.wb.xcpt   := Mux(ifc.io.busy, ifc.io.xcpt.valid     , pfc.io.s2.xcpt.valid)
   io.core.wb.cause  := Mux(ifc.io.busy, ifc.io.xcpt.bits.cause, pfc.io.s2.xcpt.bits.cause)
   io.core.wb.pc     := Mux(ifc.io.busy, ifc.io.pc             , pfc.io.s2.pc)
@@ -77,6 +79,7 @@ class SaturnRocketFrontend(edge: TLEdge)(implicit p: Parameters) extends CoreMod
   io.issue.bits  := Mux(ifc.io.busy, ifc.io.issue.bits , pfc.io.s2.issue.bits)
   ifc.io.issue.ready    := io.issue.ready
   pfc.io.s2.issue.ready := !ifc.io.busy && io.issue.ready
+  pfc.io.s2.issue_refusal := Mux(ifc.io.busy, VectorReplayCause.checker_busy, io.issue_refusal)
 
   io.core.trap_check_busy := pfc.io.busy || ifc.io.busy
 

@@ -48,6 +48,7 @@ class PipelinedFaultCheck(edge: TLEdge, sgSize: Option[BigInt])(implicit p: Para
       val scalar_store_pending = Input(Bool())
       val inst   = Valid(new VectorIssueInst)
       val replay = Output(Bool())
+      val replay_cause = Output(VectorReplayCause())
       val vstart = Valid(UInt(log2Ceil(maxVLMax).W))
       val retire = Output(Bool())
       val xcpt   = Valid(new Bundle {
@@ -57,6 +58,7 @@ class PipelinedFaultCheck(edge: TLEdge, sgSize: Option[BigInt])(implicit p: Para
       val pc     = Output(UInt(vaddrBitsExtended.W))
       val internal_replay = Valid(new VectorIssueInst)
       val issue           = Decoupled(new VectorIssueInst)
+      val issue_refusal   = Input(VectorReplayCause()) // why issue.ready is low
       val vxrm            = Input(UInt(2.W))
       val frm             = Input(UInt(3.W))
     }
@@ -191,6 +193,7 @@ class PipelinedFaultCheck(edge: TLEdge, sgSize: Option[BigInt])(implicit p: Para
   io.s2.inst.valid   := s2_valid
   io.s2.inst.bits    := s2_inst
   io.s2.replay       := false.B
+  io.s2.replay_cause := VectorReplayCause.other
   io.s2.vstart.valid := false.B
   io.s2.vstart.bits  := 0.U
   io.s2.retire       := false.B
@@ -215,6 +218,7 @@ class PipelinedFaultCheck(edge: TLEdge, sgSize: Option[BigInt])(implicit p: Para
   when (s2_valid) {
     when (!io.s2.issue.ready || (io.s2.scalar_store_pending && s2_inst.vmu)) {
       io.s2.replay := true.B
+      io.s2.replay_cause := Mux(io.s2.issue.ready, VectorReplayCause.store_pending, io.s2.issue_refusal)
     } .elsewhen (s2_inst.vstart =/= 0.U && !s2_inst.vmu) {
       io.s2.xcpt.valid := true.B
       io.s2.xcpt.bits.cause := Causes.illegal_instruction.U
@@ -225,6 +229,7 @@ class PipelinedFaultCheck(edge: TLEdge, sgSize: Option[BigInt])(implicit p: Para
       io.s2.vstart.valid := true.B
     } .elsewhen (s2_tlb_resp.miss) {
       io.s2.replay := true.B
+      io.s2.replay_cause := VectorReplayCause.tlb_miss
     } .elsewhen (s2_generate_xcpt) {
       io.s2.xcpt.valid := true.B
     } .elsewhen (s2_inst.vmu && s2_fast_sg) {
@@ -236,6 +241,7 @@ class PipelinedFaultCheck(edge: TLEdge, sgSize: Option[BigInt])(implicit p: Para
       io.s2.internal_replay.valid := true.B
     } .elsewhen (s2_replay_next_page) {
       io.s2.replay := true.B
+      io.s2.replay_cause := VectorReplayCause.page_crossing
       io.s2.issue.valid := true.B
       io.s2.vstart.valid := true.B
       io.s2.vstart.bits := s2_inst.vstart +& consumed

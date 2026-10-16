@@ -94,6 +94,7 @@ class SaturnShuttleFrontend(sgSize: Option[BigInt], edge: TLEdge)(implicit p: Pa
   io.issue.bits  := Mux(ifc.io.busy, ifc.io.issue.bits , pfc.io.s2.issue.bits)
   ifc.io.issue.ready    := io.issue.ready
   pfc.io.s2.issue.ready := !ifc.io.busy && io.issue.ready
+  pfc.io.s2.issue_refusal := DontCare // Shuttle's core does not take the replay cause
 
   io.core.trap_check_busy := pfc.io.busy || ifc.io.busy
 

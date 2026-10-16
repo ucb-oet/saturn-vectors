@@ -41,6 +41,7 @@ class SaturnRocketUnit(implicit p: Parameters) extends RocketVectorUnit()(p) wit
     val scalar_arb = Module(new Arbiter(new ScalarWrite, 2))
 
     dis.io.issue <> vfu.io.issue
+    vfu.io.issue_refusal := dis.io.issue_refusal
 
     vfu.io.core <> io.core
     vfu.io.tlb <> io.tlb

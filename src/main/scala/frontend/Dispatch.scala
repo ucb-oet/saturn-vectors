@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import chisel3.experimental.dataview._
 import org.chipsalliance.cde.config._
+import freechips.rocketchip.rocket.VectorReplayCause
 import freechips.rocketchip.tile._
 import freechips.rocketchip.util._
 
@@ -13,6 +14,7 @@ import saturn.insns._
 class VectorDispatcher(implicit p: Parameters) extends CoreModule()(p) with HasVectorParams {
   val io = IO(new Bundle {
     val issue = Flipped(Decoupled(new VectorIssueInst))
+    val issue_refusal = Output(VectorReplayCause()) // why issue.ready is low
 
     val mem = Decoupled(new VectorMemMacroOp)
     val dis = Decoupled(new VectorIssueInst)
@@ -64,6 +66,11 @@ class VectorDispatcher(implicit p: Parameters) extends CoreModule()(p) with HasV
   io.issue.ready := vat_available && io.dis.ready   && (!issue_inst.vmu || io.mem.ready) && !hwacha_block
   io.dis.valid   := vat_available && io.issue.valid && (!issue_inst.vmu || io.mem.ready) && !hwacha_block
   io.mem.valid   := vat_available && io.issue.valid && io.dis.ready && issue_inst.vmu    && !hwacha_block
+  io.issue_refusal := PriorityMux(Seq(
+    !vat_available -> VectorReplayCause.age_tags,
+    !io.dis.ready -> VectorReplayCause.dispatch_queue,
+    (issue_inst.vmu && !io.mem.ready) -> VectorReplayCause.memory_queue,
+    true.B -> VectorReplayCause.other)) // the Hwacha limiter
 
   io.vat_tail := vat_tail
   io.vat_head := vat_head
@@ -102,6 +109,7 @@ class VectorDispatcher(implicit p: Parameters) extends CoreModule()(p) with HasV
     io.dis.valid := false.B
     when (io.issue.bits.funct3 === OPMVV && io.issue.bits.opmf6 === OPMFunct6.wrxunary0) {
       io.issue.ready := io.scalar_resp.ready
+      io.issue_refusal := VectorReplayCause.other
       io.scalar_resp.valid := io.issue.valid
     }
   }
