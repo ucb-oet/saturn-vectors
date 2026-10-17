@@ -275,6 +275,36 @@ class VectorBackend(implicit p: Parameters) extends CoreModule()(p) with HasVect
     }
   }
 
+  // EventTrace: why the micro-op at the head of the dispatch queue cannot leave. The first issue group that stalls,
+  // in the order load, store, special, execute, gives the cause; the blocker is the micro-op held by the first of its
+  // sequencers that would take the head. A record is made when the head, the cause, or the blocker changes, which a
+  // register of the last cycle's tells; a micro-op behind the head has none, as it waits for the ones before it.
+  vuops.foreach { vuops =>
+    import eventtrace.EventTrace.syntax._
+    import SaturnTrace.DispatchStall
+    val stalled = vdq.io.deq.valid && !vdq.io.deq.ready
+    val group = PriorityEncoderOH(issq_stall)
+    val cause = Mux1H(group, Seq(DispatchStall.load, DispatchStall.store, DispatchStall.special) ++
+      vxissqs.map(_ => DispatchStall.execute))
+    // The issue queue's enq.bits.seq marks the sequencers of its group that would take the head.
+    val holders = issGroups.zip(group).flatMap { case (g, sel) =>
+      g.seqs.zipWithIndex.map { case (s, j) =>
+        (sel && g.issq.io.enq.bits.seq(j) && s.io.seq_hazard.valid) -> s.io.seq_hazard.bits.vat
+      }
+    }
+    val held = holders.map(_._1).orR
+    val blocker = PriorityMux(holders)
+    val now = Cat(stalled, vdq.io.deq.bits.vat, cause.asUInt, held, blocker)
+    when (stalled && now =/= RegNext(now, 0.U)) {
+      val u = vuops.where(_.vat === vdq.io.deq.bits.vat).only
+      when (held) {
+        u.event("stall") { "cause" := cause; "blocker" := vuops.where(_.vat === blocker).only }
+      } .otherwise {
+        u.event("stall") { "cause" := cause; "blocker" := Absent }
+      }
+    }
+  }
+
   // ======================================
   // Connect reads to VRF
 

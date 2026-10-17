@@ -17,6 +17,13 @@ object SaturnTrace {
     val Dispatch, Issue, Sequence = Value
   }
 
+  /** Why the micro-op at the head of the dispatch queue cannot leave: the load, store, special, or an execute
+    * sequencer it needs holds an older micro-op, and so does that sequencer's issue queue if it has entries.
+    */
+  object DispatchStall extends ChiselEnum {
+    val load, store, special, execute = Value
+  }
+
   /** One micro-op. `instruction` is the host core's instruction it comes from, an object of type `host`; `vat` is its
     * age tag, unique among live micro-ops; `vstart` and `vl` bound the elements it covers.
     */
