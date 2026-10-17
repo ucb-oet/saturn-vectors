@@ -255,6 +255,26 @@ class VectorBackend(implicit p: Parameters) extends CoreModule()(p) with HasVect
     group.issq.io.deq.ready := (valid_seqs & ready_seqs) =/= 0.U
   }
 
+  // EventTrace: a micro-op moves from the dispatch queue to its issue queues, and from them to the load, store, or
+  // execute sequencer that frees its age tag, by which the backend finds it. An issue queue of no entries passes it
+  // to its sequencer in the cycle it leaves the dispatch queue. The special sequencer's share is not traced.
+  val vuops = p(SaturnTraceVuops)
+  val mainSeqs: Seq[Sequencer[_]] = Seq(vls, vss) ++ flat_vxs
+  vuops.foreach { vuops =>
+    def find(vat: UInt) = vuops.where(_.vat === vat).only
+    val sequenced = mainSeqs.map(s => s.io.dis.fire && s.io.dis.bits.vat === vdq.io.deq.bits.vat).orR
+    when (vdq.io.deq.fire && !sequenced) {
+      val u = find(vdq.io.deq.bits.vat)
+      u.event("issue") { u.stage := SaturnTrace.VuopStage.Issue }
+    }
+    mainSeqs.foreach { s =>
+      when (s.io.dis.fire) {
+        val u = find(s.io.dis.bits.vat)
+        u.event("sequence") { u.stage := SaturnTrace.VuopStage.Sequence }
+      }
+    }
+  }
+
   // ======================================
   // Connect reads to VRF
 
@@ -504,6 +524,13 @@ class VectorBackend(implicit p: Parameters) extends CoreModule()(p) with HasVect
     io.vat_release(r_idx).valid := fire
     io.vat_release(r_idx).bits := tag
     r_idx += 1
+    // EventTrace: the micro-op ends with its age tag.
+    vuops.foreach { vuops =>
+      when (fire) {
+        val u = vuops.where(_.vat === tag).only
+        u.event("complete") { vuops.remove(u); u.destroy() }
+      }
+    }
   }
 
   clearVat(vls.io.iss.fire && vls.io.iss.bits.tail, vls.io.iss.bits.vat)

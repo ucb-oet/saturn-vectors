@@ -13,6 +13,7 @@ import saturn.common._
 import saturn.backend.{VectorBackend}
 import saturn.mem.{TLSplitInterface, VectorMemUnit}
 import saturn.frontend.{VectorDispatcher}
+import eventtrace.EventTrace
 
 class SaturnRocketUnit(implicit p: Parameters) extends RocketVectorUnit()(p) with HasVectorParams with HasCoreParameters {
 
@@ -32,9 +33,13 @@ class SaturnRocketUnit(implicit p: Parameters) extends RocketVectorUnit()(p) wit
 
     val useL1DCache = mLen == vMemDataBits
 
+    // EventTrace, in configs that trace: Saturn's micro-ops, each from Rocket's instruction; see SaturnTrace.
+    def vuop = new SaturnTrace.Vuop(new RocketTrace.Instruction(vaddrBitsExtended))
+    val vuops = EventTrace.collection(vuop)
+
     val dis = Module(new VectorDispatcher)
     val vfu = Module(new SaturnRocketFrontend(tl_if.edge))
-    val vu = Module(new VectorBackend)
+    val vu = Module(new VectorBackend()(p.alterPartial { case SaturnTraceVuops => Some(vuops) }))
     val vmu = Module(new VectorMemUnit)
 
     val hella_if = Module(new HellaCacheInterface)
@@ -42,6 +47,32 @@ class SaturnRocketUnit(implicit p: Parameters) extends RocketVectorUnit()(p) wit
 
     dis.io.issue <> vfu.io.issue
     vfu.io.issue_refusal := dis.io.issue_refusal
+
+    // EventTrace: a micro-op is created when the dispatcher sends it to the backend, which gives it its age tag. Its
+    // instruction is the one in Rocket's Check stage when the iterative fault checker sends it, or else the one in
+    // Writeback, where the pipelined fault checker's last stage is.
+    {
+      val instructions = p(RocketTraceInstructions)()
+      def at(stage: RocketTrace.Stage.Type) = instructions.where(_.stage === stage)
+      val schema = new EventTrace.Schema[SaturnTrace.Vuop](vuop) {}
+      def dispatch(instruction: RocketTrace.Instruction) = schema.create(event = "dispatch") { u =>
+        u.instruction := instruction
+        u.pc := dis.io.dis.bits.pc
+        u.bits := dis.io.dis.bits.bits
+        u.vat := dis.io.dis.bits.vat
+        u.vstart := dis.io.dis.bits.vstart
+        u.vl := dis.io.dis.bits.vconfig.vl
+        u.stage := SaturnTrace.VuopStage.Dispatch
+        vuops.add(u)
+      }
+      when (dis.io.dis.fire) {
+        EventTrace.test(at(RocketTrace.Stage.Check).size === 1) {
+          dispatch(at(RocketTrace.Stage.Check).only)
+        }.otherwise {
+          dispatch(at(RocketTrace.Stage.Writeback).only)
+        }
+      }
+    }
 
     vfu.io.core <> io.core
     vfu.io.tlb <> io.tlb
