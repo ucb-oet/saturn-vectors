@@ -33,9 +33,8 @@ class SaturnRocketUnit(implicit p: Parameters) extends RocketVectorUnit()(p) wit
 
     val useL1DCache = mLen == vMemDataBits
 
-    // EventTrace, in configs that trace: Saturn's micro-ops, each from Rocket's instruction; see SaturnTrace.
-    def vuop = new SaturnTrace.Vuop(new RocketTrace.Instruction(vaddrBitsExtended))
-    val vuops = EventTrace.collection(vuop)
+    // EventTrace: Saturn's micro-ops, each from one of Rocket's instructions; see SaturnTrace.
+    val vuops = EventTrace.collection(new SaturnTrace.Vuop(new RocketTrace.Instruction(vaddrBitsExtended)))
 
     val dis = Module(new VectorDispatcher)
     val vfu = Module(new SaturnRocketFrontend(tl_if.edge))
@@ -47,32 +46,6 @@ class SaturnRocketUnit(implicit p: Parameters) extends RocketVectorUnit()(p) wit
 
     dis.io.issue <> vfu.io.issue
     vfu.io.issue_refusal := dis.io.issue_refusal
-
-    // EventTrace: a micro-op is created when the dispatcher sends it to the backend, which gives it its age tag. Its
-    // instruction is the one in Rocket's Check stage when the iterative fault checker sends it, or else the one in
-    // Writeback, where the pipelined fault checker's last stage is.
-    {
-      val instructions = p(RocketTraceInstructions)()
-      def at(stage: RocketTrace.Stage.Type) = instructions.where(_.stage === stage)
-      val schema = new EventTrace.Schema[SaturnTrace.Vuop](vuop) {}
-      def dispatch(instruction: RocketTrace.Instruction) = schema.create(event = "dispatch") { u =>
-        u.instruction := instruction
-        u.pc := dis.io.dis.bits.pc
-        u.bits := dis.io.dis.bits.bits
-        u.vat := dis.io.dis.bits.vat
-        u.vstart := dis.io.dis.bits.vstart
-        u.vl := dis.io.dis.bits.vconfig.vl
-        u.stage := SaturnTrace.VuopStage.Dispatch
-        vuops.add(u)
-      }
-      when (dis.io.dis.fire) {
-        EventTrace.test(at(RocketTrace.Stage.Check).size === 1) {
-          dispatch(at(RocketTrace.Stage.Check).only)
-        }.otherwise {
-          dispatch(at(RocketTrace.Stage.Writeback).only)
-        }
-      }
-    }
 
     vfu.io.core <> io.core
     vfu.io.tlb <> io.tlb
@@ -146,6 +119,35 @@ class SaturnRocketUnit(implicit p: Parameters) extends RocketVectorUnit()(p) wit
       hella_if.io.vec.store_req <> block(vmu.io.dmem.store_req, tl_if.module.io.mem_busy)
       tl_if.module.io.vec.store_req.valid := false.B
       tl_if.module.io.vec.store_req.bits := DontCare
+    }
+
+    // EventTrace: a micro-op is created when the dispatcher sends it to the backend, which gives it its age tag. Its
+    // instruction is Rocket's in Check when the iterative fault checker sends it, or else in Writeback, where the
+    // pipelined fault checker's last stage is.
+    p(RocketTraceInstructions) match {
+      case Some(instructions) =>
+        import RocketTrace.{Instruction, Stage}
+        import SaturnTrace.{Vuop, VuopStage}
+        def instructionsIn(stage: Stage.Type) = instructions.where(_.stage === stage)
+        def dispatch(instruction: Instruction) =
+          EventTrace.create(new Vuop(new Instruction(vaddrBitsExtended)), event = "dispatch") { u =>
+            u.instruction := instruction
+            u.pc := dis.io.dis.bits.pc
+            u.bits := dis.io.dis.bits.bits
+            u.vat := dis.io.dis.bits.vat
+            u.vstart := dis.io.dis.bits.vstart
+            u.vl := dis.io.dis.bits.vconfig.vl
+            u.stage := VuopStage.Dispatch
+            vuops.add(u)
+          }
+        when (dis.io.dis.fire) {
+          EventTrace.test(instructionsIn(Stage.Check).size === 1) {
+            dispatch(instructionsIn(Stage.Check).only)
+          }.otherwise {
+            dispatch(instructionsIn(Stage.Writeback).only)
+          }
+        }
+      case None =>
     }
   }
 }
