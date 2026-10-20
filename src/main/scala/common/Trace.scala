@@ -30,7 +30,7 @@ object SaturnTrace {
   /** One micro-op. */
   class Vuop(host: EventTrace.ObjectType)(implicit p: Parameters) extends EventTrace.ObjectType("vuop") {
     private val inst = new VectorIssueInst
-    val instruction = const(Id(host))                 // the host core's instruction it comes from
+    val instruction = parent(host)                    // the host core's instruction it comes from
     val pc          = const(inst.pc.cloneType)
     val bits        = const(inst.bits.cloneType)
     val vat         = const(inst.vat.cloneType)       // its age tag, unique among live micro-ops

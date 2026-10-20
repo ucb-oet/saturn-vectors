@@ -302,9 +302,9 @@ class VectorBackend(implicit p: Parameters) extends CoreModule()(p) with HasVect
       when (stalled && now =/= RegNext(now, 0.U)) {
         val u = vuopWithTag(vdq.io.deq.bits.vat)
         when (held) {
-          u.event("stall") { "cause" := cause; "blocker" := vuopWithTag(blocker) }
+          u.event("stall") { "cause" := cause; u.blocked(by = vuopWithTag(blocker)) }
         } .otherwise {
-          u.event("stall") { "cause" := cause; "blocker" := Absent }
+          u.event("stall") { "cause" := cause; u.blocked(by = Absent) }
         }
       }
     case None =>
@@ -564,7 +564,7 @@ class VectorBackend(implicit p: Parameters) extends CoreModule()(p) with HasVect
       case Some(vuops) =>
         when (fire) {
           val u = vuops.where(_.vat === tag).only
-          u.event("complete") { vuops.remove(u); u.destroy() }
+          u.event("complete") { vuops.remove(u); u.complete() }
         }
       case None =>
     }
